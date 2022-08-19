@@ -47,6 +47,17 @@ def weighted_logsumexp(logprobs, weightlogits, dim):
     return torch.logsumexp(weighted_logits, dim=dim)
 
 
+
+def gather_particles(x : Tensor, indices):
+    # For resampling
+    assert indices.size(1) == x.size(1), f"bad shape {indices.shape} vs {x.shape}"
+    P, B = x.shape[:2]
+    xview = x.view(P, B, -1)
+    indices = indices[:,:,None].expand(-1, -1, xview.size(-1))
+    out = torch.gather(xview, 0, indices)
+    return out.view(*indices.shape[:2],*x.shape[2:])
+
+
 def test_weighted_logsum_exp():
     logprobs = torch.tensor([1., 2., 3.])
     
@@ -59,3 +70,5 @@ def test_weighted_logsum_exp():
     assert (torch.allclose(logprob, logprobs[0]))
 
 test_weighted_logsum_exp()
+
+

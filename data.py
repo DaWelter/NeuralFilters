@@ -95,6 +95,9 @@ def make_synthetic_sequence(seq_len = 128):
     targets = added_corruption(gt, p=0.01)
     inputs = imageify(targets, 7) + np.random.normal(0, 0.1, size=(len(gt), 7))
     targets = targets + noises
+    gt = gt.astype(np.float32)
+    inputs = inputs.astype(np.float32)
+    targets = targets.astype(np.float32)
     return gt, inputs, targets
 
 

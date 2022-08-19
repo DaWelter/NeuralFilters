@@ -1,3 +1,4 @@
+from ast import YieldFrom
 import numpy as np
 import torch
 import torch.nn as nn
@@ -6,7 +7,7 @@ import tqdm
 import dataclasses
 from functools import partial
 from torch.nn.utils.rnn import pack_sequence, PackedSequence
-from typing import Union, Optional, List, NamedTuple, Any
+from typing import Union, Optional, List, NamedTuple, Any, Tuple
 from torch import Tensor
 from torch.utils.data import DataLoader, IterableDataset
 
@@ -53,27 +54,40 @@ class RobustSmooth2ndDerivLoss(nn.Module):
         return vals.mean()
 
 
-def _test_smoothness():
-    l = RobustSmooth2ndDerivLoss(eps=0.2)
-    x = torch.linspace(0., 1., 10)[:,None,None].expand(-1,3,-1)
-    val = l(x)
-    assert torch.allclose(val, torch.tensor(0.))
-
-    x[5,:,:] = 1.
-    val = l(x)
-    assert torch.all(val > torch.tensor(0.))
-
-
-
-
 class SequenceDataset(IterableDataset):
-    def __init__(self, seqsize):
+    def __init__(self):
         super().__init__()
-        self.seqsize = seqsize
+        self.super_sequence_length = 4096
     def __iter__(self):
         while True:
-            _, inputs, targets = data.make_synthetic_sequence(self.seqsize)
-            yield inputs, targets
+            _, inputs, targets = data.make_synthetic_sequence(self.super_sequence_length)
+            yield torch.from_numpy(inputs), torch.from_numpy(targets)
+
+def iterate_batches(batch_size : int, sequence_length : Optional[int]):
+    num_workers = 4
+    loader = DataLoader(SequenceDataset(), batch_size=num_workers, num_workers=num_workers)
+    inputlist = []
+    targetlist = []
+    for inputs, targets in loader:
+        # num_workers x super sequence length -> flatten
+        inputlist += list(inputs)
+        targetlist += list(targets)
+        # When enough samples are accumulated to fill a batch ...
+        if len(inputlist)*inputs.size(1) > batch_size*(1 if sequence_length is None else sequence_length):
+            inputs = torch.cat(inputlist, dim=0)
+            targets = torch.cat(targetlist, dim=0)
+            if sequence_length is None:
+                inputs = torch.split(inputs, batch_size, dim=0)
+                targets = torch.split(targets, batch_size, dim=0)
+                yield from zip(inputs, targets)
+            else:
+                sz = batch_size*sequence_length
+                # Just cut off the superfluous data
+                inputs = util.split_and_stack(inputs[:sz,...], sequence_length)
+                targets = util.split_and_stack(targets[:sz,...], sequence_length)
+                yield inputs, targets
+            inputlist = []
+            targetlist = []
 
 
 @dataclasses.dataclass
@@ -82,26 +96,28 @@ class TrainState():
     model_states : Any = None # state for sequence models
 
 
-def compute_gradients_single_frame(model, inputs, targets, state : TrainState):
+def compute_gradients_single_frame(model, inputs : Tensor, targets : Tensor, state : TrainState):
     device =  model.device
-    inputs = util.to_tensor(inputs, device)[:,None,:]
-    targets = util.to_tensor(targets, device)[:,None]
+    #  Adds the channel dimension
+    inputs = inputs.to(device)[:,None,:] 
+    targets = targets.to(device)[:,None]
     pred = model(inputs)
     loss = F.mse_loss(pred.y, targets)        
     loss.backward()
     state.bar.set_description("Loss: %1.5f" % (loss.item()))
 
 
-def compute_gradients_sequence_model(model, inputs, targets, state : TrainState, smoothness_weight, smoothness_func):
+def compute_gradients_sequence_model(model, inputs : Tensor, targets : Tensor, state : TrainState, smoothness_weight, smoothness_func):
     device =  model.device
-    seqsize = 32
-    batchsize = inputs.shape[0] // seqsize
-    assert inputs.shape[0] == batchsize*seqsize
-    inputs = util.split_and_stack(util.to_tensor(inputs, device)[:,None,:], seqsize)
-    targets = util.split_and_stack(util.to_tensor(targets, device)[:,None], seqsize)
+    L, B = inputs.shape[:2]
+     # Add channel dimension
+    inputs = inputs.to(device)[:,:,None,:]
+    targets = targets.to(device)[:,:,None]
 
-    if state.model_states is None:
-        state.model_states = model.create_initial_state(batchsize)
+    # Or use the previous state?
+    # It wouldn't be the one that came previously in the sequence.
+    # Regardless it might be more representative of what the network inputs will be.
+    state.model_states = model.create_initial_state(B)
 
     measurement_pred, state_pred = model(inputs, state.model_states)
     
@@ -125,18 +141,12 @@ def compute_gradients_sequence_model(model, inputs, targets, state : TrainState,
 
 
 
-def _train(model, num_samples, learning_rate, gradient_udpate_func):
-    num_workers = 4
-    full_length_sequence = 1024*16
-    num_batches_train = num_samples // (num_workers * full_length_sequence)
+def _train(model, batch_size, sequence_length, num_samples, learning_rate, gradient_udpate_func):
+    batchsamples = batch_size * (sequence_length if sequence_length is not None else 1)
+    num_batches_train = (num_samples + batchsamples - 1) // batchsamples
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=1, epochs=num_batches_train)
-    
-    # The loader is tricked into created a batch with as many elements as there are worker processes. This is so that they
-    # can work nicely independently. But they return a sequence which is much longer than the sequence I want to train on.
-    # Therefore the batch is later cut and rearranged so I have pieces of 'seqsize' and `batchsize` (the true training batch size)
-    loader = DataLoader(SequenceDataset(full_length_sequence), batch_size=num_workers, num_workers=num_workers)
 
     model.train()
 
@@ -144,11 +154,7 @@ def _train(model, num_samples, learning_rate, gradient_udpate_func):
 
     train_state = TrainState(bar)
 
-    for epoch, batch in (zip(bar, loader)):
-        inputs, targets = batch
-        inputs = np.concatenate(tuple(inputs), axis=0)
-        targets = np.concatenate(tuple(targets), axis=0)
-
+    for _, (inputs, targets) in (zip(bar, iterate_batches(batch_size, sequence_length))):
         optimizer.zero_grad()
 
         gradient_udpate_func(model, inputs, targets, train_state)
@@ -157,22 +163,57 @@ def _train(model, num_samples, learning_rate, gradient_udpate_func):
         scheduler.step()
 
 
-def train_sequence_model(model, num_samples, learning_rate, smoothness_weight, smoothness_func):
+def train_sequence_model(model, batch_size, sequence_length, num_samples, learning_rate, smoothness_weight, smoothness_func):
     _train(
-        model, 
+        model,
+        batch_size, 
+        sequence_length,
         num_samples, 
         learning_rate, 
         partial(compute_gradients_sequence_model, smoothness_weight=smoothness_weight, smoothness_func=smoothness_func))
 
 
-def train_singleframe_model(model, num_samples, learning_rate):
+def train_singleframe_model(model, batch_size, num_samples, learning_rate):
     _train(
-        model, 
+        model,
+        batch_size,
+        None,
         num_samples, 
         learning_rate, 
         compute_gradients_single_frame)
 
 
 
+def _test_smoothness():
+    l = RobustSmooth2ndDerivLoss(eps=0.2)
+    x = torch.linspace(0., 1., 10)[:,None,None].expand(-1,3,-1)
+    val = l(x)
+    assert torch.allclose(val, torch.tensor(0.))
+
+    x[5,:,:] = 1.
+    val = l(x)
+    assert torch.all(val > torch.tensor(0.))
+
+
+def _test_ds1():
+    B, L = 16, 5
+    for i, (inputs, targets) in enumerate(iterate_batches(B,L)):
+        assert inputs.shape[:2] == (L,B) and len(inputs.shape)==3, f"Bad shape {inputs.shape}"
+        assert targets.shape[:2] == (L,B) and len(targets.shape)==2, f"Bad shape {targets.shape}"
+        if i>10:
+            break
+
+def _test_ds2():
+    B, L = 16, None
+    for i, (inputs, targets) in enumerate(iterate_batches(B,L)):
+        assert inputs.shape[:1] == (B,) and len(inputs.shape)==2
+        assert targets.shape[:1] == (B,) and len(targets.shape)==1
+        if i>10:
+            break
+
+
+
 if __name__ == '__main__':
     _test_smoothness()
+    _test_ds1()
+    _test_ds2()
