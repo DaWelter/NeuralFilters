@@ -64,36 +64,38 @@ def added_corruption(x : np.ndarray, p : float, minsize=3):
     return x
 
 
-def make_synthetic_sequence(seq_len = 128):
+def make_synthetic_sequence(seq_len = 128, gen : Optional[np.random.Generator]=None):
     # Creates a batch. Consists of multiple sequences of random length.
     # Sequences are concatenated, so the tensors look like regular non-sequential batches.
+    if gen is None:
+        gen = np.random.default_rng()
     gts = []
     noises = []
     total_n = seq_len
-    y0 = np.random.uniform(-0.9,0.9)
-    start_increasing = np.random.randint(1)==0
+    y0 = gen.uniform(-0.9,0.9)
+    start_increasing = gen.integers(1)==0
     while total_n > 0:
-        sel = np.random.randint(3)
-        n = np.random.randint(16, 64)
+        sel = gen.integers(3)
+        n = gen.integers(16, 64)
         if sel == 0:
-            y = sawtooth(n, y0, np.random.uniform(16, 64), start_increasing)
+            y = sawtooth(n, y0, gen.uniform(16, 64), start_increasing)
             start_increasing = y[-1]>y[-2]
         elif sel == 1:
-            y = wave(n, y0, np.random.uniform(8, 64), start_increasing)
+            y = wave(n, y0, gen.uniform(8, 64), start_increasing)
             start_increasing = y[-1]>y[-2]
         else:
             y = constant(n, y0)
             start_increasing = not start_increasing
         y0 = y[-1]
         gts.append(y)
-        noises.append(0.02*np.random.normal(0, 1., size=n))
+        noises.append(0.02*gen.normal(0, 1., size=n))
         total_n -= n
     gt = np.concatenate(gts)[:seq_len]
     noises = np.concatenate(noises)[:seq_len]
     sos = butter(2, 1./(16.), fs=1., output='sos')
     gt = sosfilt(sos, gt)
     targets = added_corruption(gt, p=0.01)
-    inputs = imageify(targets, 7) + np.random.normal(0, 0.1, size=(len(gt), 7))
+    inputs = imageify(targets, 7) + gen.normal(0, 0.1, size=(len(gt), 7))
     targets = targets + noises
     gt = gt.astype(np.float32)
     inputs = inputs.astype(np.float32)
@@ -113,5 +115,5 @@ def plot_sequence(gt, inputs, targets):
 
 
 if __name__ == '__main__':
-    np.random.seed(123456+1)
-    gt_example, inputs_example, targets_example = make_synthetic_sequence(1024)
+    gen = np.random.default_rng(123456)
+    gt_example, inputs_example, targets_example = make_synthetic_sequence(1024, gen)
