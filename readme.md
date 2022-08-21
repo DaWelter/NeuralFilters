@@ -28,16 +28,18 @@ Not covered:
 
 These questions have been answered in the literature for various use cases but I wanted to make my own experiments.
 
-The idea with the smoothness penalty can be extended to enforcing arbitrary differential constraints on the predicted signal `f`, i.e. `g(f(x), df/dx(x), df^2/dx^2(x), ...) = 0`. In fact, I made an attempt to limit the acceleration `df^2/dx^2(x)` below a threshold. It is also possible (but not shown here) to penalize the amplitude of selected frequency components because the Fourier transform to obtain the amplitudes is differentiable.
+The idea with the smoothness penalty can be extended to enforcing arbitrary differential constraints on the predicted signal `f`, i.e. `g(f(x), df/dx(x), df^2/dx^2(x), ...) = 0`. In some examples here, this is realized with a penalty for the "acceleration" `df^2/dx^2(x)` to limits its magnitude below a threshold. It is also possible (but not shown here) to penalize the amplitude of selected frequency components because the Fourier transform to obtain the amplitudes is differentiable.
 
 Code
 ----
 
 * LSTM-Denoise.ipynb: LSTM based filters
 * KF-Denoise.ipynb: Kalman filters
+* PF-Denoise.ipynb: Particle filters
 
 The rest is boilerplate and utility.
 
+Dependencies: Pytorch, Numpy, Matplotlib
 
 Examples
 --------
@@ -59,3 +61,10 @@ The posterior variance from the observation model is also shown. But it's overal
 
 An LSTM on top of the CNN backbone. In addition to the L2 loss, the second derivative of the output is heavily penalized.
 ![LSTM model](img/lstm_extreme_smoothing.png)]
+
+### Particle filter with smoothness loss
+
+Observation model is a neural network taking the particle state and the observation image as input and outputs a score how well the particle matches to the observation. Another neural network performs the prediction step for the particles. No resampling during training.
+
+It converges but results are poor. There is room for improvement.
+![LSTM model](img/pf_smoothed.png)
