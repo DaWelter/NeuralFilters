@@ -1,17 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-import tqdm
-import copy
-from functools import partial
-import pandas as pd
+from typing import Union, Optional, List, NamedTuple, Any, Tuple
 from scipy.signal import butter, sosfilt
-from torch.nn.utils.rnn import pack_sequence, PackedSequence
-from typing import Union, Optional, List
-from torch import Tensor
 
 __all__ = [ 'make_synthetic_sequence' ]
 
