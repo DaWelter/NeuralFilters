@@ -69,6 +69,44 @@ def test_weighted_logsum_exp():
     logprob = weighted_logsumexp(logprobs, weightlogits, dim=-1)
     assert (torch.allclose(logprob, logprobs[0]))
 
+
+def test_gather_particles1():
+    P, B = 5, 3
+    x = torch.arange(P*B).view(P,B)
+    #print (x)
+    # Two particles per batch as result. Different ones for each batch.
+    i = torch.tensor([
+        [ 1, 2, 2 ],
+        [ 3, 3, 4 ]
+    ])
+    y = gather_particles(x, i)
+    #print (y)
+    yexpect = torch.tensor([
+        [ 3, 7,  8 ],
+        [ 9, 10, 14 ]
+    ])
+    #print (yexpect)
+    assert torch.all(y == yexpect)
+
+def test_gather_particles2():
+    # Again with bigger tensors
+    P, B, C = 5, 3, 3
+    x = torch.rand(P,B,C)
+    # Two particles per batch as result. Different ones for each batch.
+    i = torch.tensor([
+        [ 1, 2, 2 ],
+        [ 3, 3, 4 ]
+    ])
+    y = gather_particles(x, i)
+    z = x.view(-1,C)
+    yexpect = torch.stack([
+        torch.stack([ z[3], z[7],  z[8] ]),
+        torch.stack([ z[9], z[10], z[14] ])
+    ])
+    assert torch.all(y == yexpect)
+
 test_weighted_logsum_exp()
+test_gather_particles1()
+test_gather_particles2()
 
 

@@ -64,7 +64,9 @@ An LSTM on top of the CNN backbone. In addition to the L2 loss, the second deriv
 
 ### Particle filter with smoothness loss
 
-Observation model is a neural network taking the particle state and the observation image as input and outputs a score how well the particle matches to the observation. Another neural network performs the prediction step for the particles. No resampling during training.
+Observation model is a neural network taking the particle state and the observation image as input and outputs a score how well the particle matches to the observation. Another neural network performs the prediction step for the particles. Noise is injection into the motion model to give it some randomness and allow particles to diffuse.
+Resampling is also performed during training.
 
-It converges but results are poor. There is room for improvement.
+Note that the model cannot really shine here because the input is relatively unambiguous. Particle filter models are effective for representing multi modal state distributions as might arise if for instance the input image had two peaks and the model could not immediately decide which one corresponds to the true state.
+
 ![LSTM model](img/pf_smoothed.png)
